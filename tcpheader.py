@@ -1,7 +1,7 @@
 
 class TCPHeader(object):
 
-    def __init__(self, source_port, dest_port, windowsize):
+    def __init__(self, source_port, dest_port):
         # checks each of the fields to ensure they adhere to size amd value constraints
         # each field is represented as (int value, number of bits)
         # CWR and ECE fields are not mentioned because we are following conventional TCP header format
@@ -11,13 +11,13 @@ class TCPHeader(object):
         self.ack_num = (0, 32)
         self.header_length = (5, 4)
         self.unused = (0, 6)
-        self.urg = (0, 1)  # unused, set to default value
+        self.urg = (0, 1)  # unused, setting to default value
         self.ack = (0, 1)
-        self.psh = (0, 1)  # unused, set to default value
-        self.rst = (0, 1)  # unused, set to default value
+        self.psh = (0, 1)  # unused, setting to default value
+        self.rst = (0, 1)  # unused, setting to default value
         self.syn = (0, 1)
         self.fin = (0, 1)
-        self.receive_window = (windowsize, 16)  # default value is (8192, 16)
+        self.receive_window = (8192, 16)  # unused in this implementation, setting to default value
         self.checksum = (0, 16)
         self.urgent_data_pointer = (0, 16)
         self.options = (0, 0)  # unused, set to default value

@@ -3,6 +3,7 @@ import time
 import traceback
 from tcpheader import TCPHeader
 from socket import *
+import re
 
 MSS = 576
 
@@ -52,9 +53,10 @@ class Server(object):
             message_string = message.decode()
             message_header = message_string[:161]
             message_payload = message_string[161:]
-            computed_checksum = self.calculate_checksum(message)
+            checksum_received = header[128:160]
+            self.calculate_checksum(message)
 
-            if not self.validate_checksum(message_header, computed_checksum):
+            if not self.validate_checksum(checksum_received):
                 # If SYN bit = 1, it is a 3-way handshake initiation
                 if message_header[110] == 1 and self.state == LISTEN_STATE:
                     print("[Received SYN handshake message]")
@@ -125,13 +127,13 @@ class Server(object):
                     print("[Connection closed]")
 
     def calculate_checksum(self, message):
-        computed_checksum = bin(0)
+        self.tcp_header.reset_checksum()
         for i in range(0, len(message.encode()) * 8, 16):
             chunk = message.encode()[i:i + 16]
-            computed_checksum = bin(computed_checksum ^ chunk)
-        return computed_checksum
+            self.tcp_header.checksum[0].set_checksum(self.tcp_header.checksum[0] ^ chunk)
+        print("[Checksum computed]")
 
-    def validate_checksum(self, header, checksum):
+    def validate_checksum(self, checksum):
         if checksum != header[128:160]:
             return False
         return True

@@ -3,6 +3,7 @@ import time
 import traceback
 from tcpheader import TCPHeader
 from socket import *
+import re
 
 MSS = 576
 ALPHA = 0.125
@@ -27,10 +28,10 @@ class Client(object):
         self.client_socket.bind(('', int(self.source_port)))
         self.udpl_port = udpl_port
         self.udpl_ip_address = udpl_ip_address
-        self.windowsize = windowsize
+        self.windowsize = windowsize  # specified in bytes
         self.windowsize_N = self.windowsize/MSS
         self.window = []
-        self.timeout_interval = 3
+        self.timeout_interval = 3  # Choosing an arbitrary initial timeout
         self.sample_rtt = 0
         self.estimated_rtt = 0
         self.dev_rtt = 0
@@ -150,8 +151,9 @@ class Client(object):
             start_time = time.time()
             self.start_timeout(start_time)
             # go-back-n retransmit from the send_base to the nextseqnum (not inclusive)
-            # after the timer expires
-            print(f"[Timer expired, resending un-ACKed messages from sequence number {self.send_base} to {self.next_seq_num}]")
+            # after the timer expires, double the timeout
+            self.timeout_interval = self.timeout_interval * 2
+            print(f"[Timer expired, doubling timeout interval to {self.timeout_interval}]")
             curr_seq_num = self.send_base
             while curr_seq_num < self.next_seq_num:
                 self.calculate_checksum(self.seq_num_to_chunk[curr_seq_num])
@@ -187,6 +189,7 @@ class Client(object):
                     self.seq_num_to_is_retransmitted[ack_seq_num_int] = True  # setting the is_transmitted flag to True
                     self.calculate_checksum(self.seq_num_to_chunk[ack_seq_num_int])
                     self.client_socket.sendto(self.seq_num_to_chunk[ack_seq_num_int], (self.udpl_ip_address, int(self.udpl_port)))
+                    self.ack_tracker[ack_seq_num_int] = 0
 
     def split_into_mss(self, data):
         res = []
@@ -270,8 +273,8 @@ if __name__ == '__main__':
 
         client = Client(ack_port_number, port_number_of_udpl, input_file, ip_address_of_udpl, windowsize)
         client.three_way_handshake()
-        client.transmit_data()
-        client.close_connection()
+        # client.transmit_data()
+        # client.close_connection()
 
     except Exception as e:
         print(f"[Invalid arguments]: {e}")
