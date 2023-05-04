@@ -46,13 +46,15 @@ class Client(object):
         
     def three_way_handshake(self):
         if self.state == CLOSED_STATE:
+            print("[Initiating 3 way handshake]")
             self.tcp_header.set_syn(1)
             self.tcp_header.set_seq_number(random.randrange(2**32 - 1))
             # Sending only the TCP header without any application layer data since it is a handshake message
             message = self.tcp_header.get_binary_string().encode()
-
+            self.calculate_checksum(message)
             self.client_socket.sendto(message, (self.udpl_ip_address, int(self.udpl_port)))
             self.state = SYN_SENT_STATE
+            print("[SYN handshake message sent]")
 
             reply, address = self.client_socket.recvfrom(2048)
             reply_string = reply.decode()
@@ -63,6 +65,7 @@ class Client(object):
             reply_ack_num = reply_header[64:96]
             # 110th bit in the TCP header is the SYN bit
             if reply_header[110] == 1:
+                print("[SYNACK handshake message received]")
                 self.tcp_header.set_syn(0)
                 self.tcp_header.set_seq_num(int(reply_ack_num))  # ACK number of response is the client's
                 # initial seq num + 1, which is set as the next sequence number
@@ -71,15 +74,20 @@ class Client(object):
                 # Sending only the TCP header without any application layer data since it is a handshake message
                 message = tcp_header_bin_string.encode()
 
+                self.calculate_checksum(message)
                 self.client_socket.sendto(message, (self.udpl_ip_address, int(self.udpl_port)))
+                print("[ACK sent, connection now established and ready to send messages]")
                 self.tcp_header.reset_ack_flag()
                 self.state = ESTABLISHED_STATE
+                return
 
     def transmit_data(self):
         # Client can send and receive payload only if it is in ESTABLISHED state
         if self.state == ESTABLISHED_STATE:
+            print("[Starting data transmission]")
             with open(self.input_file, 'r') as file:
                 data = file.read()
+                file.close()
             # We reverse the list of packets so that we can pop the first packet first from the buffer
             for tup in self.split_into_mss(data)[::-1]:
                 data_chunk = tup[0]
@@ -89,48 +97,53 @@ class Client(object):
                 self.seq_num_to_chunk[seq_num] = data_chunk
                 self.seq_num_to_is_retransmitted[seq_num] = False
 
+            print(f"[Split the data into {len(buffer)} chunks]")
             listen_for_acks_thread = Thread(target=self.listen_for_acks, args=(), daemon=True)
             manage_timeout_thread = Thread(target=self.manage_timeout, args=(), daemon=True)
+            listen_for_acks_thread.start()
+            manage_timeout_thread.start()
             # send the first N packets in the buffer
             for i in range(self.windowsize_N):
                 self.tcp_header.set_seq_num(self.next_seq_num)
                 packet = buffer.pop()
                 message = self.tcp_header.get_binary_string().encode() + packet.encode()
+                self.calculate_checksum(message)
                 self.client_socket.sendto(message, (self.udpl_ip_address, int(self.udpl_port)))
                 if not self.seq_num_to_is_retransmitted[self.next_seq_num]:
                     self.seq_num_to_transmit_time[self.next_seq_num] = time.time()
                 # We increment by length of packet and not MSS to account for packets of length < MSS
                 self.next_seq_num += len(packet.encode())
 
-            monitor_send_window_thread = Thread(target=self.monitor_send_window, args=())
-            monitor_send_window_thread.join()
-            monitor_send_base_thread = Thread(target=self.monitor_send_base, args=())
-            monitor_send_base_thread.join()
+            print(f"[Sent the first {self.windowsize_N} segments]")
+            monitor_send_window_thread = Thread(target=self.monitor_send_window, args=(), daemon=True)
+            monitor_send_window_thread.start()
+            monitor_send_base_thread = Thread(target=self.monitor_send_base, args=(), daemon=True)
+            monitor_send_base_thread.start()
             listen_for_acks_thread.join()
-            manage_timeout_thread.join()
             return
 
     def monitor_send_base(self):
         while True:
             if self.send_base == self.last_seq_num:
-                return
+                break
 
     def monitor_send_window(self):
         while True:
             # Send as long as there are packets in the window to be sent and buffer is non-empty
             if len(buffer) == 0:
-                return
+                break
             while self.next_seq_num < self.send_base + self.windowsize_N:
                 if len(buffer) == 0:
-                    return
+                    break
                 self.tcp_header.set_seq_num(self.next_seq_num)
                 packet = buffer.pop()
                 message = self.tcp_header.get_binary_string().encode() + packet.encode()
+                self.calculate_checksum(message)
                 self.client_socket.sendto(message, (self.udpl_ip_address, int(self.udpl_port)))
+                print(f"[Sent packet of sequence number {self.next_seq_num}]")
                 if not self.seq_num_to_is_retransmitted[self.next_seq_num]:
                     self.seq_num_to_transmit_time[self.next_seq_num] = time.time()
                 self.next_seq_num += len(packet.encode())  # Increment next_seq_num by length of data whenever we send a packet
-
 
     def manage_timeout_and_gobackn(self):
         while True:
@@ -138,9 +151,12 @@ class Client(object):
             self.start_timeout(start_time)
             # go-back-n retransmit from the send_base to the nextseqnum (not inclusive)
             # after the timer expires
+            print(f"[Timer expired, resending un-ACKed messages from sequence number {self.send_base} to {self.next_seq_num}]")
             curr_seq_num = self.send_base
             while curr_seq_num < self.next_seq_num:
+                self.calculate_checksum(self.seq_num_to_chunk[curr_seq_num])
                 self.client_socket.sendto(self.seq_num_to_chunk[curr_seq_num], (self.udpl_ip_address, int(self.udpl_port)))
+                print(f"[Sent packet of sequence number {curr_seq_num}]")
 
     def start_timeout(self, start_time):
         while True:
@@ -156,22 +172,27 @@ class Client(object):
                 reply_ack_num = reply_header[64:96]
                 ack_seq_num_bin = reply_header[32:64]
                 ack_seq_num_int = int(ack_seq_num_bin, 2)  # sequence number for which it is the ACK
+                print(f"[ACK received for sequence number {ack_seq_num_int}]")
                 # Move send_base whenever a packet gets acknowledged
                 self.send_base += len(self.seq_num_to_chunk.encode())
                 if not self.seq_num_to_is_retransmitted[ack_seq_num_int]:
                     self.sample_rtt = time.time() - self.seq_num_to_transmit_time[ack_seq_num_int]
+                    self.timeout_interval = self.get_timeout()
+                    print(f"[Timeout interval reset to {self.timeout_interval}]")
                 self.ack_tracker[ack_seq_num_int] += 1
 
                 # If 3 ACKS for the same sequence number have been received, we perform fast retransmit
                 if self.ack_tracker[ack_seq_num_int] >= 3:
+                    print(f"[Performing fast retransmit for sequence number {ack_seq_num_int}]")
                     self.seq_num_to_is_retransmitted[ack_seq_num_int] = True  # setting the is_transmitted flag to True
+                    self.calculate_checksum(self.seq_num_to_chunk[ack_seq_num_int])
                     self.client_socket.sendto(self.seq_num_to_chunk[ack_seq_num_int], (self.udpl_ip_address, int(self.udpl_port)))
 
     def split_into_mss(self, data):
         res = []
         curr_seq_num = 0
         data_bits = data.encode()
-        stride = MSS * 8  # since MSS is specified in bytes, we convert it to bits since data is in bits
+        stride = MSS
         for i in range(0, len(data_bits), stride):
             if i == 0:
                 res.append((data_bits[i:i + stride], self.tcp_header.self.seq_num[0]))
@@ -195,15 +216,18 @@ class Client(object):
         return self.get_estimated_rtt() + 4 * self.get_dev_rtt()
 
     def close_connection(self):
+        print("[Initiating connection close]")
         self.tcp_header.set_fin(1)
         # Sending only the TCP header without any application layer data since it is a handshake message
         message = self.tcp_header.get_binary_string().encode()
-
+        self.calculate_checksum(message)
         self.client_socket.sendto(message, (self.udpl_ip_address, int(self.udpl_port)))
+        print("[Sent FIN handshake message]")
         self.state = FIN_WAIT_1_STATE
 
-        listen_for_fin_acks_thread = Thread(target=self.listen_for_acks, args=())
-        listen_for_fin_acks_thread.join()
+        listen_for_fin_acks_thread = Thread(target=self.listen_for_acks, args=(), daemon=True)
+        listen_for_fin_acks_thread.start()
+        return
 
     def listen_for_fin_acks(self):
         while True:
@@ -211,13 +235,22 @@ class Client(object):
             reply_string = reply.decode()
             reply_header = reply_string[:161]  # The fixed TCP header has 20 bytes i.e. 160 bits
             if reply_header[96] == 0 and self.state == FIN_WAIT_1_STATE:
+                print("[Received FINACK handshake message]")
                 self.state = FIN_WAIT_2_STATE  # FINACK received
             elif reply_header[96] == 1 and self.state == FIN_WAIT_2_STATE:
+                print("[Received final ACK from server]")
                 self.state = TIME_WAIT_STATE
-                time.sleep(30)
+                time.sleep(10)
                 self.state = CLOSED_STATE
+                print("[Connection closed]")
                 return
 
+    def calculate_checksum(self, message):
+        self.tcp_header.reset_checksum()
+        for i in range(0, len(message.encode()) * 8, 16):
+            chunk = message.encode()[i:i + 16]
+            self.tcp_header.checksum[0].set_checksum(self.tcp_header.checksum[0] ^ chunk)
+        print("[Checksum computed]")
 
 if __name__ == '__main__':
     try:
@@ -241,7 +274,7 @@ if __name__ == '__main__':
         client.close_connection()
 
     except Exception as e:
-        print(f">>> [Invalid arguments]: {e}")
+        print(f"[Invalid arguments]: {e}")
         traceback.print_exc()
-        sys.exit(">>> [Exiting]")
+        sys.exit("[Exiting]")
 

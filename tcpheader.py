@@ -23,16 +23,22 @@ class TCPHeader(object):
         self.options = (0, 0)  # unused, set to default value
 
     def set_seq_num(self, seq_num):
-        self.seq_num = (self.check_length_and_get_val(seq_num, 32, "Sequence Number"), 4)
+        self.seq_num = (self.check_length_and_get_val(seq_num, 32, "Sequence Number"), 32)
 
     def set_ack_num(self, ack_num):
         try:
-            self.ack_num = (self.check_length_and_get_val(ack_num, 32, "ACK number"), 4)
+            self.ack_num = (self.check_length_and_get_val(ack_num, 32, "ACK number"), 32)
         except ValueError as e:
             self.ack = 1
 
     def reset_ack_flag(self):
         self.ack = (0, 1)
+
+    def set_checksum(self, checksum):
+        self.checksum = (self.check_length_and_get_val(checksum, 16, "Checksum"), 16)
+
+    def reset_checksum(self):
+        self.checksum = (0, 16)
 
     def set_syn(self, syn):
         self.syn = (self.check_length_and_get_val(syn, 1, "SYN"), 1)
@@ -62,7 +68,4 @@ class TCPHeader(object):
         if int_val.bit_length() > max_len:
             raise ValueError(error_string)
         return int_val
-
-    def calculate_checksum(self):
-        pass
 

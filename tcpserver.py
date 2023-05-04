@@ -1,4 +1,5 @@
 import sys
+import time
 import traceback
 from tcpheader import TCPHeader
 from socket import *
@@ -23,34 +24,118 @@ class Server(object):
         self.output_file = output_file # file to write the received data to
         self.header = TCPHeader(self.listening_port, self.client_port)
         self.state = LISTEN_STATE
+        self.current_ack_num = 0  # Max ACK number sent so far
+        self.process_message_flag = False
+        # stores the string message for each sequence number so that we can reorder before writing to the file at the end
+        self.seq_num_to_chunk = {}
 
     def listen(self):
         # listen continuously on listening port for connections from clients
         while True:
             message, client_address = self.server_socket.recvfrom(2048)
+
+            self.buffer.append(message)
+            process_messages_thread = Thread(target=self.process_messages, args=(), daemon=True)
+            process_messages_thread.start()
+            self.process_message_flag = True
+            if len(buffer) == 0:
+                self.process_message_flag = False
+            process_messages_thread.join()
+            return
+
+    def process_messages(self):
+        while self.process_message_flag:
+            if len(buffer) == 0:
+                return
+            message = buffer.pop()
+
             message_string = message.decode()
             message_header = message_string[:161]
             message_payload = message_string[161:]
+            computed_checksum = self.calculate_checksum(message)
 
-            # If SYN bit = 1, it is a 3-way handshake initiation
-            if message_header[110] == 1 and self.state == LISTEN_STATE:
-                self.tcp_header.set_syn(1)
-                self.tcp_header.set_seq_number(random.randrange(2 ** 32 - 1))
-                client_seq_num = message_header[:32]  # bits 0 to 31 in the header are the bits corresponding to the sequence number
-                self.tcp_header.set_ack_num(int(client_seq_num) + 1)  # set ACK number as client's sequence number + 1
-                tcp_header_bin_string = self.tcp_header.get_binary_string()
-                message = tcp_header_bin_string.encode()
+            if not self.validate_checksum(message_header, computed_checksum):
+                # If SYN bit = 1, it is a 3-way handshake initiation
+                if message_header[110] == 1 and self.state == LISTEN_STATE:
+                    print("[Received SYN handshake message]")
+                    self.tcp_header.set_syn(1)
+                    self.tcp_header.set_seq_number(random.randrange(2 ** 32 - 1))
+                    client_seq_num = message_header[:32]  # bits 0 to 31 in the header are the bits corresponding to the sequence number
+                    self.current_ack_num = int(client_seq_num) + 1
+                    self.tcp_header.set_ack_num(self.current_ack_num)  # set ACK number as client's sequence number + 1
+                    message = self.tcp_header.get_binary_string().encode()
 
-                # Send ACK directly to client
-                self.client_socket.sendto(message, (self.client_ip_address, int(self.client_port)))
-                self.state = SYN_RCVD_STATE
-            elif message_header[110] == 0 and self.state == SYN_RCVD_STATE:
-                self.state = ESTABLISHED_STATE
-            elif message_header[110] == 0 and self.state == ESTABLISHED_STATE:
-                client_seq_num = message_header[:32]
-                self.tcp_header.set_seq_number()
-            elif message_header[96] == 1: # FIN bit set
-                pass
+                    # Send ACK directly to client
+                    self.client_socket.sendto(message, (self.client_ip_address, int(self.client_port)))
+                    print("[Sent SYNACK message]")
+                    self.state = SYN_RCVD_STATE
+                elif message_header[110] == 0 and self.state == SYN_RCVD_STATE:
+                    print("[Received final ACK, connection established]")
+                    self.state = ESTABLISHED_STATE
+
+                elif message_header[110] == 0 and self.state == ESTABLISHED_STATE:
+                    # If the sequence number of the message received from client > current ACK number, resend current ACK number
+                    # elif < : do nothing because implies that it has already been ACKED,
+                    # else = : update ACK number since the next expected sequence number broadcasted in prev message has been received)
+                    # reset current ACK number as sequence number + length of payload
+                    # Set sequence number for which it is the ACK
+                    # Write to output file data
+                    client_seq_num_bin = message_header[:32]
+                    client_seq_num_int = int(client_seq_num_bin, 2)
+                    # if sequence number of message received < max ACK number sent, we don't want to do anything
+                    # because it has already been cumulatively ACK-ed
+                    print(f"[Received sequence number {client_seq_num_int}]")
+                    if client_seq_num_int == self.current_ack_num:
+                        # We keep recording the output file data and write it at once on connection close
+                        self.seq_num_to_chunk[client_seq_num_int] = message_payload
+                        self.current_ack_num += len(message_payload.encode())
+                        self.tcp_header.set_ack_num(self.current_ack_num)
+                        self.tcp_header.set_seq_number(client_seq_num_int)
+                        self.client_socket.sendto(message, (self.client_ip_address, int(self.client_port)))
+                        print(f"[Packet accepted. Ready to receive next sequence number {self.current_ack_num}, ACK sent]")
+                    elif client_seq_num_int > self.current_ack_num:  # Gap detected, resend ACK
+                        self.tcp_header.set_ack_num(self.current_ack_num)
+                        self.tcp_header.set_seq_number(client_seq_num_int)
+                        self.client_socket.sendto(message, (self.client_ip_address, int(self.client_port)))
+                        print(f"[Gap detected, ACK for sequence number {client_seq_num_int} received, when last ACK sent was for sequence number {self.current_ack_num}]")
+
+                # Received message with FIN bit set
+                elif message_header[96] == 1 and self.state == ESTABLISHED_STATE:
+                    print("[Received connection close request (FIN handshake message)]")
+                    with open(self.output_file, 'w') as file:
+                        sorted_seq_num_to_chunk = dict(sorted(self.seq_num_to_chunk.items()))
+                        data = ''
+                        for seq_num in sorted_seq_num_to_chunk.keys():
+                            data += sorted_seq_num_to_chunk[seq_num]
+                        file.write(data)
+                        file.close()
+                    print(f"[Finished writing to output file {self.output_file}]")
+                    message = self.tcp_header.get_binary_string().encode()
+                    self.client_socket.sendto(message, (self.client_ip_address, int(self.client_port)))
+                    print("[Sent FINACK handshake message]")
+                    self.state = CLOSE_WAIT_STATE
+                    time.sleep(10)
+                    self.tcp_header.set_fin(1)
+                    message = self.tcp_header.get_binary_string().encode()
+                    self.client_socket.sendto(message, (self.client_ip_address, int(self.client_port)))
+                    print("[Sent final FIN handshake message]")
+                    self.state = LAST_ACK_STATE
+                elif message_header[96] == 0 and self.state == LAST_ACK_STATE:
+                    self.state = LISTEN_STATE
+                    print("[Connection closed]")
+
+    def calculate_checksum(self, message):
+        computed_checksum = bin(0)
+        for i in range(0, len(message.encode()) * 8, 16):
+            chunk = message.encode()[i:i + 16]
+            computed_checksum = bin(computed_checksum ^ chunk)
+        return computed_checksum
+
+    def validate_checksum(self, header, checksum):
+        if checksum != header[128:160]:
+            return False
+        return True
+
 
 if __name__ == '__main__':
     try:
@@ -71,7 +156,7 @@ if __name__ == '__main__':
         server = Server(listening_port, ip_address_for_acks, port_for_acks, output_file)
         server.listen()
     except Exception as e:
-        print(f">>> [Invalid arguments]: {e}")
+        print(f"[Invalid arguments]: {e}")
         traceback.print_exc()
-        sys.exit(">>> [Exiting]")
+        sys.exit("[Exiting]")
 
