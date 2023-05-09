@@ -39,7 +39,7 @@ class Server(object):
         """
         Listen continuously on listening port for connections from clients
         """
-        self.server_socket.settimeout(10)
+        self.server_socket.settimeout(30)
         while True:
             try:
                 if not self.server_socket.fileno() == -1:
@@ -65,7 +65,6 @@ class Server(object):
         number. Reset current ACK number as sequence number + length of payload and send it to client as next expected
         sequence number. Set sequence number for which it is the ACK in this segment.
         * Else if the sequence number of the message received from client > current ACK number, resend current ACK number
-    update ACK number since the next expected sequence number broadcasted in prev message has been received
         * If the sequence number of the message received from client < current ACK number, do nothing because it
         implies that it has already been ACKED cumulatively
         """

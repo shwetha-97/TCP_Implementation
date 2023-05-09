@@ -37,7 +37,7 @@ class Client(object):
         self.client_socket.bind(('127.0.0.1', self.source_port))
         self.udpl_port = int(udpl_port)
         self.udpl_ip_address = udpl_ip_address
-        self.windowsize = windowsize  # specified in bytes
+        self.windowsize = int(windowsize)  # specified in bytes
         self.window = []
         self.timeout_interval = 10  # Choosing an arbitrary initial timeout (for data transmission)
         self.sample_rtt = 0
@@ -74,10 +74,10 @@ class Client(object):
             retry_thread = Thread(target=self.manage_handshake_timeout, args=(self.tcp_header.get_binary_string().encode('utf-16'),))
             retry_thread.start()
 
-            self.listening_socket.settimeout(2)
             while True:
                 try:
                     if not self.listening_socket.fileno() == -1:
+                        self.listening_socket.settimeout(2)
                         reply, address = self.listening_socket.recvfrom(2048)
                     else:
                         break
@@ -139,7 +139,7 @@ class Client(object):
         3. Pipeline and send initial chunks in the window to the server at once. Increment next_seq_num by the length of
         each packet encountered
         4. Spin up threads to monitor the send window continuously, listen for ACKs and monitor the send base to ensure
-        it is not equal to the last sequence number signalling end of transition.
+        it is not equal to the last sequence number signalling end of transmission.
         """
         # Client can send and receive payload only if it is in ESTABLISHED state
         if self.state == ESTABLISHED_STATE:
@@ -172,10 +172,10 @@ class Client(object):
                 message = self.tcp_header.get_binary_string().encode('utf-16') + packet
                 self.client_socket.sendto(message, (self.udpl_ip_address, self.udpl_port))
                 print(f"[Sent initial packets of sequence number {self.next_seq_num}]")
-                if not self.seq_num_to_is_retransmitted[self.next_seq_num]:
+                if self.seq_num_to_is_retransmitted.get(self.next_seq_num) is not None and not self.seq_num_to_is_retransmitted[self.next_seq_num]:
                     self.seq_num_to_transmit_time[self.next_seq_num] = time.time()
-                # We increment by length of packet and not MSS to account for packets of length < MSS
-                self.next_seq_num += len(packet)
+                    # We increment by length of packet and not MSS to account for packets of length < MSS
+                    self.next_seq_num += len(packet)
 
             monitor_send_window_thread = Thread(target=self.monitor_send_window, args=(), daemon=True)
             monitor_send_window_thread.start()
@@ -223,12 +223,13 @@ class Client(object):
 
     def listen_for_acks(self):
         """
-        Listens for ACKs to sequence numbers transmitted and performs Go-Back-N on timeout.
-        Performs fast retransmit if 3 duplicate ACKs are received.
-        Every time an ACK is successfully received, the send base moves forward and SampleRTT is recalculated based on
-        time at which the pcket was originally sent, provided the packet has not been retransmitted
+        * Listens for ACKs to sequence numbers transmitted and performs Go-Back-N on timeout.
+        * Performs fast retransmit if 3 duplicate ACKs are received.
+        * Every time an ACK is successfully received, the send base moves forward and SampleRTT is recalculated based on
+        time at which the packet was originally sent, provided the packet has not been retransmitted
+        * When a timeout occurs, the interval is doubled and Go-Back-N is executed
         """
-        self.listening_socket.settimeout(self.timeout_interval)
+        self.listening_socket.settimeout(min(self.timeout_interval, 5))
         while True:
             try:
                 reply, address = self.listening_socket.recvfrom(2048)
@@ -242,14 +243,14 @@ class Client(object):
                     print(f"[ACK received for sequence number {ack_seq_num_int}]")
                     # Move send_base whenever a packet gets acknowledged
                     self.send_base += len(self.seq_num_to_chunk)
-                    if not self.seq_num_to_is_retransmitted[ack_seq_num_int]:
+                    if self.seq_num_to_is_retransmitted.get(ack_seq_num_int) is not None and not self.seq_num_to_is_retransmitted[ack_seq_num_int]:
                         self.sample_rtt = time.time() - self.seq_num_to_transmit_time[ack_seq_num_int]
                         self.timeout_interval = self.get_timeout()
                         print(f"[Timeout interval recalculated and set to {self.timeout_interval}]")
-                    self.ack_tracker[ack_seq_num_int] += 1
+                        self.ack_tracker[ack_seq_num_int] += 1
 
                     # If 3 ACKS for the same sequence number have been received, we perform fast retransmit
-                    if self.ack_tracker[ack_seq_num_int] >= 3:
+                    if self.ack_tracker.get(ack_seq_num_int) is not None and self.ack_tracker[ack_seq_num_int] >= 3:
                         print(f"[Performing fast retransmit for sequence number {ack_seq_num_int}]")
                         self.seq_num_to_is_retransmitted[ack_seq_num_int] = True  # setting the is_transmitted flag to True
                         packet = self.seq_num_to_chunk[ack_seq_num_int]
@@ -315,7 +316,6 @@ class Client(object):
     def close_connection(self):
         """
         Performs connection teardown using FIN handshake mechanism
-        :return:
         """
         print("[Initiating connection close]")
         self.tcp_header.set_fin(1)
@@ -340,10 +340,10 @@ class Client(object):
         retry_thread = Thread(target=self.manage_handshake_timeout, args=(message,))
         retry_thread.start()
 
-        self.listening_socket.settimeout(5)
         while True:
             try:
                 if not self.listening_socket.fileno() == -1:
+                    self.listening_socket.settimeout(5)
                     reply, address = self.listening_socket.recvfrom(2048)
                 else:
                     break

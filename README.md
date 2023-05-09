@@ -5,7 +5,7 @@ Command to run UDPL proxy:
 It is of the form `newudpl -p receive_port:send_port -i input_host_address -o output_host_address -L loss-percentage`. 1234 has been hard coded/configured in the TCP client code as the sending port.
 
 ```
-./newudpl -p 2222:3333 -i 127.0.0.1:1234 -o 127.0.0.1:4444 -vv -L 0
+./newudpl -p 2222:3333 -i 127.0.0.1:1234 -o 127.0.0.1:4444 -vv -L 50
 ```
 
 Order of commands to run:

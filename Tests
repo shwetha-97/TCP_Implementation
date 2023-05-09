@@ -1,0 +1,92 @@
+Tests:
+1.	Happy case (end to end):
+
+Server:
+(base) shwethasubbu@Shwethas-MacBook-Air-2 TCP_Implementation % python tcpserver.py result.txt 4444 127.0.0.1 8888
+Server is up on 127.0.0.1 on port 4444
+[Server received message]
+[Checksum valid]
+[Received SYN handshake message]
+[Sent SYNACK message to ('127.0.0.1', 8888)]
+[Server received message]
+[Checksum valid]
+[Received final ACK, connection established]
+[Server received message]
+[Checksum valid]
+[Received sequence number 2956375779]
+[Packet accepted. Ready to receive next sequence number 2956375895, ACK sent to ('127.0.0.1', 8888)]
+[Server received message]
+[Checksum valid]
+[Received connection close request (FIN handshake message)]
+[Finished writing to output file result.txt]
+[Sent FINACK handshake message]
+[Sent final FIN handshake message]
+[Server received message]
+[Checksum valid]
+[Connection closed]
+[No response from client, timing out]
+
+Client:
+(base) shwethasubbu@Shwethas-MacBook-Air-2 TCP_Implementation % python tcpclient.py input.txt 127.0.0.1 2222 1563 8888
+[Client is up at 127.0.0.1, listening on 8888 and sending from 1234]
+[Initiating 3-way handshake]
+[Checksum computed:57314]
+[SYN handshake message sent to ('127.0.0.1', 2222)]
+[SYNACK handshake message received]
+[Checksum computed:54498]
+[ACK sent to ('127.0.0.1', 2222), connection established]
+[Starting data transmission]
+[Split the data into 1 chunks]
+[Checksum computed:2769]
+[Sent initial packets of sequence number 2956375779]
+[End of transmission]
+[ACK received for sequence number 2956375779]
+[Timeout interval recalculated and set to 0.018897294998168945]
+[Initiating connection close]
+[Checksum computed:54498]
+[Sent FIN handshake message]
+[Received FINACK handshake message]
+[Received final ACK from server]
+[Checksum computed:54754]
+[Sent FIN handshake message]
+[Connection closed]
+
+2.	3-way handshake retries exhausted
+(base) shwethasubbu@Shwethas-MacBook-Air-2 TCP_Implementation % python tcpclient.py bar 127.0.0.1 2222 1563 8888
+[Client is up at 127.0.0.1, listening on 8888 and sending from 1234]
+[Initiating 3-way handshake]
+[Checksum computed:57826]
+[SYN handshake message sent to ('127.0.0.1', 2222)]
+[Checksum computed:55778]
+Retrying handshake 1 times
+[Checksum computed:55778]
+Retrying handshake 2 times
+[Checksum computed:55778]
+Retrying handshake 3 times
+Max retries reached, closing the socket.
+(base) shwethasubbu@Shwethas-MacBook-Air-2 TCP_Implementation %
+
+3.	Connection teardown retries exhausted
+(base) shwethasubbu@Shwethas-MacBook-Air-2 TCP_Implementation % python tcpclient.py bar 127.0.0.1 2222 1563 8888
+[Client is up at 127.0.0.1, listening on 8888 and sending from 1234]
+[Initiating 3-way handshake]
+[Checksum computed:59106]
+[SYN handshake message sent to ('127.0.0.1', 2222)]
+[Checksum computed:56802]
+Retrying handshake 1 times
+[Checksum computed:56802]
+Retrying handshake 2 times
+[Checksum computed:56802]
+Retrying handshake 3 times
+Max retries reached, closing the socket.
+[Initiating connection close]
+[Checksum computed:58850]
+[Sent FIN handshake message]
+[Checksum computed:56546]
+Retrying handshake 1 times
+[Checksum computed:56546]
+Retrying handshake 2 times
+[Checksum computed:56546]
+Retrying handshake 3 times
+Max retries reached, closing the socket.
+(base) shwethasubbu@Shwethas-MacBook-Air-2 TCP_Implementation %
