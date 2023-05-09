@@ -1,5 +1,5 @@
 # TCP_Implementation
-TCP Implementation over a UDP proxy
+TCP Implementation over a UDP proxy or emulator which simulates a network mimicking congestion, corruption of bits, delay and packet loss based on percentage specified. (Not included in this repository since it is proprietary)
 
 Command to run UDPL proxy:
 ```
